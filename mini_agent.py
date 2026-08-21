@@ -48,32 +48,32 @@ DONE_MARKER = "TASK_COMPLETE"
 
 SANDBOX_DIRNAME = "sandbox"  # エージェントが読み書きできる唯一のディレクトリ
 
-SYSTEM_PROMPT = f"""You are a helpful assistant that can interact with a computer via bash.
+SYSTEM_PROMPT = f"""あなたはbash経由でコンピュータを操作できる有能なアシスタントです。
 
-Rules:
-- Your response must contain exactly ONE bash code block with ONE command
-  (or several commands chained with && / ||).
-- Include a short THOUGHT explaining your reasoning before the command.
-- You can ONLY read and write files under the current directory (which is
-  already the sandbox root — do not try to `cd` out of it, it will fail).
-- There is NO network access. Do not attempt to curl/wget/pip install
-  anything that requires the internet — it will fail.
-- When the task is fully done, run exactly:
-    echo {DONE_MARKER} && echo "<one-line summary of what you did>"
-  as your final command. Do not combine it with anything else.
+ルール:
+- 回答には、1つのコマンド(または && / || で連結した複数コマンド)を含む
+  bashコードブロックをちょうど1つだけ含めること。
+- コマンドの前に、判断理由を短く説明するTHOUGHTを書くこと。
+- 読み書きできるのは現在のディレクトリ以下のみ(すでにサンドボックスの
+  ルートになっている。`cd` で外に出ようとしても失敗する)。
+- ネットワークアクセスはできない。インターネット接続が必要なcurl/wget/
+  pip installなどは実行しないこと(失敗する)。
+- タスクが完全に完了したら、最後のコマンドとして必ず次を単体で実行すること:
+    echo {DONE_MARKER} && echo "<行った内容の1行要約>"
+  他のコマンドと組み合わせないこと。
 
-Format your response as shown below.
+回答は以下の形式に従うこと。
 
-THOUGHT: <your reasoning>
+THOUGHT: <判断理由>
 ```bash
-<your single command>
+<単一のコマンド>
 ```
 """
 
-INSTANCE_TEMPLATE = """Task: {task}
+INSTANCE_TEMPLATE = """タスク: {task}
 
-Working directory: {cwd} (this IS the sandbox root)
-Remember: exactly one bash command per response, inside a ```bash block.
+作業ディレクトリ: {cwd} (これがサンドボックスのルートです)
+忘れずに: 1回の回答につきbashコマンドは1つだけ、```bash ブロック内に書くこと。
 """
 
 ACTION_RE = re.compile(r"```bash\s*\n(.*?)```", re.DOTALL)
@@ -133,9 +133,9 @@ class Sandbox:
             out = e.output or ""
             if isinstance(out, bytes):
                 out = out.decode("utf-8", errors="replace")
-            return {"output": out + f"\n[timed out after {self.timeout}s]", "returncode": -1}
+            return {"output": out + f"\n[{self.timeout}秒でタイムアウトしました]", "returncode": -1}
         except Exception as e:  # noqa: BLE001 — サンドボックス起動失敗などを捕捉
-            return {"output": f"[sandbox error] {e}", "returncode": -1}
+            return {"output": f"[サンドボックスエラー] {e}", "returncode": -1}
 
 
 # --------------------------------------------------------------------------
@@ -150,8 +150,8 @@ def parse_action(content: str) -> str:
     matches = [m.strip() for m in ACTION_RE.findall(content)]
     if len(matches) != 1:
         raise FormatError(
-            f"Expected exactly 1 ```bash``` block, found {len(matches)}. "
-            "Reminder: respond with exactly one bash code block."
+            f"```bash```ブロックはちょうど1つである必要がありますが、{len(matches)}個見つかりました。"
+            "リマインダー: bashコードブロックを1つだけ含めて回答してください。"
         )
     return matches[0]
 
@@ -179,7 +179,7 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OpenRouter HTTP {e.code}: {body}") from e
+        raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {body}") from e
     return data["choices"][0]["message"]["content"]
 
 
@@ -203,24 +203,24 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         try:
             command = parse_action(reply)
         except FormatError as e:
-            print(f"[format error] {e}")
-            messages.append({"role": "user", "content": f"FORMAT ERROR: {e}"})
+            print(f"[フォーマットエラー] {e}")
+            messages.append({"role": "user", "content": f"フォーマットエラー: {e}"})
             continue
 
         result = sandbox.execute(command)
         output = result["output"]
-        print(f"--- output (exit {result['returncode']}) ---\n{output}")
+        print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
         first_line = output.lstrip().splitlines()[0].strip() if output.strip() else ""
         if first_line == DONE_MARKER and result["returncode"] == 0:
             summary = "\n".join(output.lstrip().splitlines()[1:]).strip()
-            print(f"\n✅ done: {summary}")
+            print(f"\n✅ 完了: {summary}")
             return
 
         observation = f"<output>\n{output}\n</output>\n<returncode>{result['returncode']}</returncode>"
         messages.append({"role": "user", "content": observation})
 
-    print(f"\n⚠️  stopped after {max_steps} steps without completion.")
+    print(f"\n⚠️  {max_steps}ステップ経過しましたが完了しませんでした。")
 
 
 # --------------------------------------------------------------------------
@@ -228,23 +228,23 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
 # --------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Single-file bwrap-sandboxed coding agent (OpenRouter).")
-    parser.add_argument("task", help="task description for the agent")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenRouter model (default: {DEFAULT_MODEL})")
-    parser.add_argument("--max-steps", type=int, default=15, help="max loop iterations (default: 15)")
+    parser = argparse.ArgumentParser(description="1ファイル・bwrapサンドボックス方式のコーディングエージェント(OpenRouter使用)。")
+    parser.add_argument("task", help="エージェントに与えるタスクの説明")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenRouterのモデル (デフォルト: {DEFAULT_MODEL})")
+    parser.add_argument("--max-steps", type=int, default=15, help="ループの最大反復回数 (デフォルト: 15)")
     parser.add_argument(
         "--sandbox-dir",
         default=SANDBOX_DIRNAME,
-        help=f"sandbox directory, created if missing (default: ./{SANDBOX_DIRNAME})",
+        help=f"サンドボックスディレクトリ。存在しなければ作成される (デフォルト: ./{SANDBOX_DIRNAME})",
     )
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        sys.exit("error: set OPENROUTER_API_KEY in your environment first.")
+        sys.exit("エラー: 先に環境変数 OPENROUTER_API_KEY を設定してください。")
 
     if not shutil.which("bwrap"):
-        sys.exit("error: 'bwrap' (bubblewrap) not found. Install it first (e.g. apt install bubblewrap).")
+        sys.exit("エラー: 'bwrap' (bubblewrap) が見つかりません。先にインストールしてください (例: apt install bubblewrap)。")
 
     sandbox_root = Path(args.sandbox_dir).resolve()
     run_agent(args.task, args.model, api_key, args.max_steps, sandbox_root)
