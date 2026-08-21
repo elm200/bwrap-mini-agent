@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-mini_agent.py — a single-file, bwrap-sandboxed coding agent.
+mini_agent.py — 1ファイル・bwrapサンドボックス方式のコーディングエージェント。
 
-Design borrowed from mini-swe-agent (https://github.com/SWE-agent/mini-swe-agent):
-  - agent loop:            agents/default.py
-  - bubblewrap sandbox:    environments/extra/bubblewrap.py
-  - regex action parsing:  models/utils/actions_text.py
+設計はmini-swe-agent (https://github.com/SWE-agent/mini-swe-agent) から借用:
+  - エージェントループ:      agents/default.py
+  - bubblewrapサンドボックス: environments/extra/bubblewrap.py
+  - 正規表現による行動パース: models/utils/actions_text.py
 
-Differences from mini-swe-agent:
-  - Everything lives in one file, trimmed to the essentials.
-  - The agent can only touch a fixed "sandbox/" subdirectory (bound read-write
-    inside bwrap); the rest of the filesystem is mounted read-only, and
-    networking inside the sandbox is disabled (--unshare-net).
-  - Model provider is hardcoded to OpenRouter's OpenAI-compatible endpoint.
-  - Default model: google/gemini-2.5-flash-lite
+mini-swe-agentとの違い:
+  - すべてを1ファイルに収め、必要最小限に削ぎ落としている。
+  - エージェントが触れるのは固定の "sandbox/" サブディレクトリのみ(bwrap内で
+    読み書き可能としてバインド)。それ以外のファイルシステムは読み取り専用で
+    マウントされ、サンドボックス内のネットワークは遮断される (--unshare-net)。
+  - モデルプロバイダーはOpenRouterのOpenAI互換エンドポイントに固定。
+  - デフォルトモデル: google/gemini-2.5-flash-lite
 
-Usage:
+使い方:
     export OPENROUTER_API_KEY=sk-or-...
-    python3 mini_agent.py "Write a haiku generator in sandbox/haiku.py and run it"
+    python3 mini_agent.py "sandbox/haiku.py に俳句ジェネレーターを書いて実行して"
 
-    # override model / step limit
-    python3 mini_agent.py --model openai/gpt-4o-mini --max-steps 20 "task here"
+    # モデルやステップ数上限を上書きする場合
+    python3 mini_agent.py --model openai/gpt-4o-mini --max-steps 20 "タスク内容"
 """
 
 from __future__ import annotations
@@ -39,14 +39,14 @@ import uuid
 from pathlib import Path
 
 # --------------------------------------------------------------------------
-# Config
+# 設定
 # --------------------------------------------------------------------------
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemini-2.5-flash-lite"
 DONE_MARKER = "TASK_COMPLETE"
 
-SANDBOX_DIRNAME = "sandbox"  # the ONLY directory the agent may read/write
+SANDBOX_DIRNAME = "sandbox"  # エージェントが読み書きできる唯一のディレクトリ
 
 SYSTEM_PROMPT = f"""You are a helpful assistant that can interact with a computer via bash.
 
@@ -80,8 +80,8 @@ ACTION_RE = re.compile(r"```bash\s*\n(.*?)```", re.DOTALL)
 
 
 # --------------------------------------------------------------------------
-# Sandbox execution (bwrap) — adapted from
-# minisweagent/environments/extra/bubblewrap.py
+# サンドボックス実行(bwrap)— minisweagent/environments/extra/bubblewrap.py
+# を元に改変
 # --------------------------------------------------------------------------
 
 class Sandbox:
@@ -95,7 +95,7 @@ class Sandbox:
         cmd = [
             self.executable,
             "--unshare-user-try",
-            "--unshare-net",  # <- network disabled inside the sandbox
+            "--unshare-net",  # <- サンドボックス内のネットワークを遮断
             "--ro-bind", "/usr", "/usr",
             "--ro-bind", "/bin", "/bin",
             "--ro-bind", "/lib", "/lib",
@@ -109,8 +109,8 @@ class Sandbox:
             "--dev", "/dev",
             "--new-session",
             "--setenv", "PATH", "/usr/local/bin:/usr/sbin:/usr/bin:/bin",
-            # only the sandbox root is writable, and it's the only thing
-            # bound in from the host filesystem outside of the base OS dirs
+            # 書き込み可能なのはsandboxルートのみ。基本OSディレクトリ以外で
+            # ホストのファイルシステムからバインドされるのもこれだけ
             "--bind", str(self.root), str(self.root),
             "--chdir", str(self.root),
             "bash", "-c", command,
@@ -134,13 +134,12 @@ class Sandbox:
             if isinstance(out, bytes):
                 out = out.decode("utf-8", errors="replace")
             return {"output": out + f"\n[timed out after {self.timeout}s]", "returncode": -1}
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 — サンドボックス起動失敗などを捕捉
             return {"output": f"[sandbox error] {e}", "returncode": -1}
 
 
 # --------------------------------------------------------------------------
-# Action parsing — adapted from
-# minisweagent/models/utils/actions_text.py
+# 行動のパース — minisweagent/models/utils/actions_text.py を元に改変
 # --------------------------------------------------------------------------
 
 class FormatError(Exception):
@@ -158,7 +157,7 @@ def parse_action(content: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# OpenRouter client (OpenAI-compatible chat completions)
+# OpenRouterクライアント(OpenAI互換のchat completions)
 # --------------------------------------------------------------------------
 
 def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
@@ -169,7 +168,7 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            # optional but recommended by OpenRouter:
+            # 必須ではないがOpenRouterが推奨しているヘッダー:
             "HTTP-Referer": "https://local.mini-agent",
             "X-Title": "mini_agent.py",
         },
@@ -185,7 +184,7 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# Agent loop — adapted from minisweagent/agents/default.py
+# エージェントループ — minisweagent/agents/default.py を元に改変
 # --------------------------------------------------------------------------
 
 def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root: Path) -> None:
