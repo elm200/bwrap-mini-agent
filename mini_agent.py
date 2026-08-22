@@ -184,8 +184,7 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {body}") from e
     return {
-        # モデルが出力枠を思考に使い切ると content が null で返ることがあるため空文字に正規化
-        "content": data["choices"][0]["message"]["content"] or "",
+        "content": data["choices"][0]["message"]["content"],
         "usage": data.get("usage") or {},
         "elapsed": elapsed,
     }
@@ -256,29 +255,12 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         output = result["output"]
         print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
-        lines = output.splitlines()
-        done_idx = next((i for i, line in enumerate(lines) if line.strip() == DONE_MARKER), None)
-
-        if done_idx == 0 and result["returncode"] == 0:
-            summary = "\n".join(lines[1:]).strip()
+        first_line = output.lstrip().splitlines()[0].strip() if output.strip() else ""
+        if first_line == DONE_MARKER and result["returncode"] == 0:
+            summary = "\n".join(output.lstrip().splitlines()[1:]).strip()
             print(f"\n✅ 完了: {summary}")
             print(format_totals(totals, total_elapsed, step))
             return
-
-        if done_idx is not None and result["returncode"] == 0:
-            # DONE_MARKERは単体コマンドの最終出力(=1行目)である必要があるという
-            # ルールにモデルが従わなかった(他のコマンドと && で連結した)。
-            # 完了扱いにはせず、プロトコル違反として明示的にモデルへ突き返す。
-            print(f"[プロトコル違反] {DONE_MARKER} が単体コマンドではなく、"
-                  f"出力の{done_idx + 1}行目に他のコマンドと連結されて出現しました。")
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"プロトコル違反: {DONE_MARKER} は他のコマンドと && 等で連結せず、"
-                    "単体の最終コマンドとして実行してください。"
-                ),
-            })
-            continue
 
         observation = f"<output>\n{output}\n</output>\n<returncode>{result['returncode']}</returncode>"
         messages.append({"role": "user", "content": observation})
