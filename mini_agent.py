@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -160,7 +161,7 @@ def parse_action(content: str) -> str:
 # OpenRouterクライアント(OpenAI互換のchat completions)
 # --------------------------------------------------------------------------
 
-def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
+def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
     payload = json.dumps({"model": model, "messages": messages}).encode("utf-8")
     req = urllib.request.Request(
         OPENROUTER_URL,
@@ -175,12 +176,43 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> str:
         method="POST",
     )
     try:
+        start = time.perf_counter()
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+        elapsed = time.perf_counter() - start
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {body}") from e
-    return data["choices"][0]["message"]["content"]
+    return {
+        "content": data["choices"][0]["message"]["content"],
+        "usage": data.get("usage") or {},
+        "elapsed": elapsed,
+    }
+
+
+def format_usage(usage: dict, elapsed: float) -> str:
+    parts = []
+    if (p := usage.get("prompt_tokens")) is not None:
+        parts.append(f"入力:{p}tok")
+    if (c := usage.get("completion_tokens")) is not None:
+        reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        parts.append(f"出力:{c}tok" + (f"(思考:{reasoning}tok)" if reasoning else ""))
+    if (cost := usage.get("cost")) is not None:
+        parts.append(f"費用:${cost:.6f}")
+    parts.append(f"所要:{elapsed:.2f}秒")
+    return "[使用量] " + " / ".join(parts)
+
+
+def format_totals(totals: dict, elapsed: float, steps: int) -> str:
+    parts = [
+        f"{steps}ステップ",
+        f"入力:{totals['prompt_tokens']}tok",
+        f"出力:{totals['completion_tokens']}tok"
+        + (f"(思考:{totals['reasoning_tokens']}tok)" if totals["reasoning_tokens"] else ""),
+        f"費用:${totals['cost']:.6f}",
+        f"LLM応答時間合計:{elapsed:.2f}秒",
+    ]
+    return "[累計] " + " / ".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -194,11 +226,23 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         {"role": "user", "content": INSTANCE_TEMPLATE.format(task=task, cwd=sandbox.root)},
     ]
 
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "cost": 0.0}
+    total_elapsed = 0.0
+
     for step in range(1, max_steps + 1):
         print(f"\n=== step {step}/{max_steps} ===")
-        reply = call_openrouter(messages, model, api_key)
+        call = call_openrouter(messages, model, api_key)
+        reply = call["content"]
+        usage = call["usage"]
         messages.append({"role": "assistant", "content": reply})
         print(reply.strip())
+        print(format_usage(usage, call["elapsed"]))
+
+        totals["prompt_tokens"] += usage.get("prompt_tokens") or 0
+        totals["completion_tokens"] += usage.get("completion_tokens") or 0
+        totals["reasoning_tokens"] += (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+        totals["cost"] += usage.get("cost") or 0.0
+        total_elapsed += call["elapsed"]
 
         try:
             command = parse_action(reply)
@@ -215,12 +259,14 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         if first_line == DONE_MARKER and result["returncode"] == 0:
             summary = "\n".join(output.lstrip().splitlines()[1:]).strip()
             print(f"\n✅ 完了: {summary}")
+            print(format_totals(totals, total_elapsed, step))
             return
 
         observation = f"<output>\n{output}\n</output>\n<returncode>{result['returncode']}</returncode>"
         messages.append({"role": "user", "content": observation})
 
     print(f"\n⚠️  {max_steps}ステップ経過しましたが完了しませんでした。")
+    print(format_totals(totals, total_elapsed, max_steps))
 
 
 # --------------------------------------------------------------------------
