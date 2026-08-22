@@ -235,7 +235,7 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         reply = call["content"]
         usage = call["usage"]
         messages.append({"role": "assistant", "content": reply})
-        print(reply.strip() if reply is not None else "None")
+        print(reply.strip())
         print(format_usage(usage, call["elapsed"]))
 
         totals["prompt_tokens"] += usage.get("prompt_tokens") or 0
