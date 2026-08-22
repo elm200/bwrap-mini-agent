@@ -184,7 +184,8 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
         body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {body}") from e
     return {
-        "content": data["choices"][0]["message"]["content"],
+        # モデルが出力枠を思考に使い切ると content が null で返ることがあるため空文字に正規化
+        "content": data["choices"][0]["message"]["content"] or "",
         "usage": data.get("usage") or {},
         "elapsed": elapsed,
     }
@@ -255,9 +256,13 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         output = result["output"]
         print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
-        first_line = output.lstrip().splitlines()[0].strip() if output.strip() else ""
-        if first_line == DONE_MARKER and result["returncode"] == 0:
-            summary = "\n".join(output.lstrip().splitlines()[1:]).strip()
+        # DONE_MARKERは本来単体コマンドの最終出力として1行目に来る想定だが、
+        # モデルが他のコマンドと && で連結してしまい、後続の行に出ることがあるため
+        # 出力全体から探す。
+        lines = output.splitlines()
+        done_idx = next((i for i, line in enumerate(lines) if line.strip() == DONE_MARKER), None)
+        if done_idx is not None and result["returncode"] == 0:
+            summary = "\n".join(lines[done_idx + 1:]).strip()
             print(f"\n✅ 完了: {summary}")
             print(format_totals(totals, total_elapsed, step))
             return
