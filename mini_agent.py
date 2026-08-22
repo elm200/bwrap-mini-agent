@@ -198,7 +198,7 @@ def format_usage(usage: dict, elapsed: float) -> str:
         reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
         parts.append(f"出力:{c}tok" + (f"(思考:{reasoning}tok)" if reasoning else ""))
     if (cost := usage.get("cost")) is not None:
-        parts.append(f"費用:${cost:.6f}")
+        parts.append(f"費用:{cost * 100:.4f}セント")
     parts.append(f"所要:{elapsed:.2f}秒")
     return "[使用量] " + " / ".join(parts)
 
@@ -209,7 +209,7 @@ def format_totals(totals: dict, elapsed: float, steps: int) -> str:
         f"入力:{totals['prompt_tokens']}tok",
         f"出力:{totals['completion_tokens']}tok"
         + (f"(思考:{totals['reasoning_tokens']}tok)" if totals["reasoning_tokens"] else ""),
-        f"費用:${totals['cost']:.6f}",
+        f"費用:{totals['cost'] * 100:.4f}セント",
         f"LLM応答時間合計:{elapsed:.2f}秒",
     ]
     return "[累計] " + " / ".join(parts)
