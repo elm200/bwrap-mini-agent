@@ -285,9 +285,12 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         output = result["output"]
         print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
-        first_line = output.lstrip().splitlines()[0].strip() if output.strip() else ""
-        if first_line == DONE_MARKER and result["returncode"] == 0:
-            summary = "\n".join(output.lstrip().splitlines()[1:]).strip()
+        # DONE_MARKERは他のコマンドと && で連結されて後続の行に出ることもあるため、
+        # 出力全体から「その行だけでDONE_MARKERと完全一致する行」を探す。
+        lines = output.splitlines()
+        done_idx = next((i for i, line in enumerate(lines) if line.strip() == DONE_MARKER), None)
+        if done_idx is not None and result["returncode"] == 0:
+            summary = "\n".join(lines[done_idx + 1:]).strip()
             print(f"\n✅ 完了: {summary}")
             print(format_totals(totals, total_elapsed, step))
             return
