@@ -179,8 +179,10 @@ def log_exchange(direction: str, body, meta: str = "") -> None:
 # OpenRouterクライアント(OpenAI互換のchat completions)
 # --------------------------------------------------------------------------
 
-def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
+def call_openrouter(messages: list[dict], model: str, api_key: str, disable_reasoning: bool = False) -> dict:
     request_payload = {"model": model, "messages": messages}
+    if disable_reasoning:
+        request_payload["reasoning"] = {"enabled": False}
     log_exchange("REQUEST", request_payload)
 
     req = urllib.request.Request(
@@ -247,8 +249,21 @@ def format_totals(totals: dict, elapsed: float, steps: int) -> str:
 # エージェントループ — minisweagent/agents/default.py を元に改変
 # --------------------------------------------------------------------------
 
-def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root: Path) -> None:
-    log_exchange("TASK開始", {"task": task, "model": model, "max_steps": max_steps, "sandbox_root": str(sandbox_root)})
+def run_agent(
+    task: str,
+    model: str,
+    api_key: str,
+    max_steps: int,
+    sandbox_root: Path,
+    disable_reasoning: bool = False,
+) -> None:
+    log_exchange("TASK開始", {
+        "task": task,
+        "model": model,
+        "max_steps": max_steps,
+        "sandbox_root": str(sandbox_root),
+        "disable_reasoning": disable_reasoning,
+    })
 
     sandbox = Sandbox(sandbox_root)
     messages = [
@@ -261,7 +276,7 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
 
     for step in range(1, max_steps + 1):
         print(f"\n=== step {step}/{max_steps} ===")
-        call = call_openrouter(messages, model, api_key)
+        call = call_openrouter(messages, model, api_key, disable_reasoning)
         reply = call["content"]
         usage = call["usage"]
         messages.append({"role": "assistant", "content": reply})
@@ -316,6 +331,11 @@ def main() -> None:
         default=SANDBOX_DIRNAME,
         help=f"サンドボックスディレクトリ。存在しなければ作成される (デフォルト: ./{SANDBOX_DIRNAME})",
     )
+    parser.add_argument(
+        "--no-reasoning",
+        action="store_true",
+        help="OpenRouterに reasoning: {enabled: false} を送り、思考を無効化する (対応モデルのみ)",
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -326,7 +346,7 @@ def main() -> None:
         sys.exit("エラー: 'bwrap' (bubblewrap) が見つかりません。先にインストールしてください (例: apt install bubblewrap)。")
 
     sandbox_root = Path(args.sandbox_dir).resolve()
-    run_agent(args.task, args.model, api_key, args.max_steps, sandbox_root)
+    run_agent(args.task, args.model, api_key, args.max_steps, sandbox_root, args.no_reasoning)
 
 
 if __name__ == "__main__":
