@@ -53,6 +53,12 @@ LOG_FILE = Path("mini_agent.log")  # ハーネス<->LLM間の生のやり取り�
 SANDBOX_DIRNAME = "sandbox"  # ホスト側で使うサンドボックスディレクトリ名(デフォルト)
 SANDBOX_MOUNT = "/sandbox"  # サンドボックス内から見えるパス(ホスト側のパスとは無関係)
 
+# ターミナルに出力しているときだけ色を付ける(リダイレクト/パイプ時はエスケープ
+# シーケンスが混ざらないようにする)
+_USE_COLOR = sys.stdout.isatty()
+STEP_COLOR = "\033[1;36m" if _USE_COLOR else ""  # 太字シアン
+RESET_COLOR = "\033[0m" if _USE_COLOR else ""
+
 SYSTEM_PROMPT = f"""あなたはbash経由でコンピュータを操作できる有能なアシスタントです。
 
 ルール:
@@ -275,7 +281,7 @@ def run_agent(
     total_elapsed = 0.0
 
     for step in range(1, max_steps + 1):
-        print(f"\n=== step {step}/{max_steps} ===")
+        print(f"\n{STEP_COLOR}=== step {step}/{max_steps} ==={RESET_COLOR}")
         call = call_openrouter(messages, model, api_key, disable_reasoning)
         reply = call["content"]
         usage = call["usage"]
