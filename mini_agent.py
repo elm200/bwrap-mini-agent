@@ -256,16 +256,29 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
         output = result["output"]
         print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
-        # DONE_MARKERは本来単体コマンドの最終出力として1行目に来る想定だが、
-        # モデルが他のコマンドと && で連結してしまい、後続の行に出ることがあるため
-        # 出力全体から探す。
         lines = output.splitlines()
         done_idx = next((i for i, line in enumerate(lines) if line.strip() == DONE_MARKER), None)
-        if done_idx is not None and result["returncode"] == 0:
-            summary = "\n".join(lines[done_idx + 1:]).strip()
+
+        if done_idx == 0 and result["returncode"] == 0:
+            summary = "\n".join(lines[1:]).strip()
             print(f"\n✅ 完了: {summary}")
             print(format_totals(totals, total_elapsed, step))
             return
+
+        if done_idx is not None and result["returncode"] == 0:
+            # DONE_MARKERは単体コマンドの最終出力(=1行目)である必要があるという
+            # ルールにモデルが従わなかった(他のコマンドと && で連結した)。
+            # 完了扱いにはせず、プロトコル違反として明示的にモデルへ突き返す。
+            print(f"[プロトコル違反] {DONE_MARKER} が単体コマンドではなく、"
+                  f"出力の{done_idx + 1}行目に他のコマンドと連結されて出現しました。")
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"プロトコル違反: {DONE_MARKER} は他のコマンドと && 等で連結せず、"
+                    "単体の最終コマンドとして実行してください。"
+                ),
+            })
+            continue
 
         observation = f"<output>\n{output}\n</output>\n<returncode>{result['returncode']}</returncode>"
         messages.append({"role": "user", "content": observation})
