@@ -281,7 +281,6 @@ def run_agent(
         usage = call["usage"]
         messages.append({"role": "assistant", "content": reply})
         print(reply.strip())
-        print(format_usage(usage, call["elapsed"]))
 
         totals["prompt_tokens"] += usage.get("prompt_tokens") or 0
         totals["completion_tokens"] += usage.get("completion_tokens") or 0
@@ -294,6 +293,7 @@ def run_agent(
         except FormatError as e:
             print(f"[フォーマットエラー] {e}")
             messages.append({"role": "user", "content": f"フォーマットエラー: {e}"})
+            print(format_usage(usage, call["elapsed"]))
             continue
 
         result = sandbox.execute(command)
@@ -307,11 +307,13 @@ def run_agent(
         if done_idx is not None and result["returncode"] == 0:
             summary = "\n".join(lines[done_idx + 1:]).strip()
             print(f"\n✅ 完了: {summary}")
+            print(format_usage(usage, call["elapsed"]))
             print(format_totals(totals, total_elapsed, step))
             return
 
         observation = f"<output>\n{output}\n</output>\n<returncode>{result['returncode']}</returncode>"
         messages.append({"role": "user", "content": observation})
+        print(format_usage(usage, call["elapsed"]))
 
     print(f"\n⚠️  {max_steps}ステップ経過しましたが完了しませんでした。")
     print(format_totals(totals, total_elapsed, max_steps))
