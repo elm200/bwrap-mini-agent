@@ -17,7 +17,7 @@ mini-swe-agentとの違い:
 
 使い方:
     export OPENROUTER_API_KEY=sk-or-...
-    python3 mini_agent.py "sandbox/haiku.py に俳句ジェネレーターを書いて実行して"
+    python3 mini_agent.py "haiku.py に俳句ジェネレーターを書いて実行して"
 
     # モデルやステップ数上限を上書きする場合
     python3 mini_agent.py --model openai/gpt-4o-mini --max-steps 20 "タスク内容"
@@ -50,7 +50,8 @@ DONE_MARKER = "TASK_COMPLETE"
 
 LOG_FILE = Path("mini_agent.log")  # ハーネス<->LLM間の生のやり取りを追記していくログ
 
-SANDBOX_DIRNAME = "sandbox"  # エージェントが読み書きできる唯一のディレクトリ
+SANDBOX_DIRNAME = "sandbox"  # ホスト側で使うサンドボックスディレクトリ名(デフォルト)
+SANDBOX_MOUNT = "/sandbox"  # サンドボックス内から見えるパス(ホスト側のパスとは無関係)
 
 SYSTEM_PROMPT = f"""あなたはbash経由でコンピュータを操作できる有能なアシスタントです。
 
@@ -114,9 +115,11 @@ class Sandbox:
             "--new-session",
             "--setenv", "PATH", "/usr/local/bin:/usr/sbin:/usr/bin:/bin",
             # 書き込み可能なのはsandboxルートのみ。基本OSディレクトリ以外で
-            # ホストのファイルシステムからバインドされるのもこれだけ
-            "--bind", str(self.root), str(self.root),
-            "--chdir", str(self.root),
+            # ホストのファイルシステムからバインドされるのもこれだけ。
+            # ホスト側のパス(self.root)とは無関係に、サンドボックス内では
+            # 常に SANDBOX_MOUNT として見える。
+            "--bind", str(self.root), SANDBOX_MOUNT,
+            "--chdir", SANDBOX_MOUNT,
             "bash", "-c", command,
         ]
         return cmd
@@ -250,7 +253,7 @@ def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root:
     sandbox = Sandbox(sandbox_root)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": INSTANCE_TEMPLATE.format(task=task, cwd=sandbox.root)},
+        {"role": "user", "content": INSTANCE_TEMPLATE.format(task=task, cwd=SANDBOX_MOUNT)},
     ]
 
     totals = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "cost": 0.0}
