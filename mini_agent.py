@@ -306,7 +306,8 @@ def run_agent(
         output = result["output"]
         print(f"--- 出力 (終了コード {result['returncode']}) ---\n{output}")
 
-        # DONE_MARKERは他のコマンドと && で連結されて後続の行に出ることもあるため、
+        # DONE_MARKERは他のコマンドと && で連結されて後続の行に出ることもある。
+        # 本来は規約違反だがあまりに事例が多いのでこれを受容することにする。
         # 出力全体から「その行だけでDONE_MARKERと完全一致する行」を探す。
         lines = output.splitlines()
         done_idx = next((i for i, line in enumerate(lines) if line.strip() == DONE_MARKER), None)
