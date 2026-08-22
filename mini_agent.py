@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -46,6 +47,8 @@ from pathlib import Path
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemini-2.5-flash-lite"
 DONE_MARKER = "TASK_COMPLETE"
+
+LOG_FILE = Path("mini_agent.log")  # ハーネス<->LLM間の生のやり取りを追記していくログ
 
 SANDBOX_DIRNAME = "sandbox"  # エージェントが読み書きできる唯一のディレクトリ
 
@@ -158,14 +161,28 @@ def parse_action(content: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# ログ — ハーネス<->LLM間のリクエスト/レスポンスをなるべく忠実に記録する
+# --------------------------------------------------------------------------
+
+def log_exchange(direction: str, body, meta: str = "") -> None:
+    ts = datetime.now().astimezone().isoformat(timespec="milliseconds")
+    header = f"[{ts}] {direction}" + (f" ({meta})" if meta else "")
+    text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False, indent=2)
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(f"{'=' * 80}\n{header}\n{'=' * 80}\n{text}\n\n")
+
+
+# --------------------------------------------------------------------------
 # OpenRouterクライアント(OpenAI互換のchat completions)
 # --------------------------------------------------------------------------
 
 def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
-    payload = json.dumps({"model": model, "messages": messages}).encode("utf-8")
+    request_payload = {"model": model, "messages": messages}
+    log_exchange("REQUEST", request_payload)
+
     req = urllib.request.Request(
         OPENROUTER_URL,
-        data=payload,
+        data=json.dumps(request_payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -178,11 +195,19 @@ def call_openrouter(messages: list[dict], model: str, api_key: str) -> dict:
     try:
         start = time.perf_counter()
         with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            raw_body = resp.read().decode("utf-8")
+            data = json.loads(raw_body)
         elapsed = time.perf_counter() - start
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {body}") from e
+        raw_body = e.read().decode("utf-8", errors="replace")
+        try:
+            error_data = json.loads(raw_body)
+        except json.JSONDecodeError:
+            error_data = raw_body
+        log_exchange("RESPONSE", error_data, meta=f"HTTP {e.code} エラー")
+        raise RuntimeError(f"OpenRouterへのリクエストが失敗しました (HTTP {e.code}): {raw_body}") from e
+
+    log_exchange("RESPONSE", data, meta=f"{elapsed:.2f}秒")
     return {
         "content": data["choices"][0]["message"]["content"],
         "usage": data.get("usage") or {},
@@ -220,6 +245,8 @@ def format_totals(totals: dict, elapsed: float, steps: int) -> str:
 # --------------------------------------------------------------------------
 
 def run_agent(task: str, model: str, api_key: str, max_steps: int, sandbox_root: Path) -> None:
+    log_exchange("TASK開始", {"task": task, "model": model, "max_steps": max_steps, "sandbox_root": str(sandbox_root)})
+
     sandbox = Sandbox(sandbox_root)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
