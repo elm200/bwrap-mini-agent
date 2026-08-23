@@ -1,4 +1,4 @@
-# mini_agent.py
+# bwrap-mini-agent
 
 bubblewrap(bwrap)でサンドボックス化した環境の中で、LLM(OpenRouter経由)にbashコマンドを1つずつ実行させる、1ファイルのミニコーディングエージェント。
 
