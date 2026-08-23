@@ -1,3 +1,4 @@
+# ネットワーク遮断・読み取り専用の最小環境で $1 のコマンドを実行するサンドボックス
 bwrap \
 --unshare-user-try \
 --unshare-net \
